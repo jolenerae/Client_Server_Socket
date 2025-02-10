@@ -46,7 +46,7 @@ bool check_key_timeout(char key, int timeout);
 void serialize(char *buffer, packet *packet_msg);
 void deserialize(char *buffer, packet *packet_msg);
 
-int __cdecl main(void) 
+int __cdecl main(void)
 {
     // structure that has info about winsocks
     WSADATA wsaData;
@@ -144,7 +144,7 @@ int __cdecl main(void)
     // create threads
     ThreadHandleTwo = CreateThread(NULL, 0, thread_send, &client_socket, 0, &ThreadIdTwo);
     ThreadHandle = CreateThread(NULL, 0, thread_receive, &client_socket, 0, &ThreadId);
-    
+   
     // organize into an array
     Threads[0] = ThreadHandle;
     Threads[1] = ThreadHandleTwo;
@@ -156,9 +156,8 @@ int __cdecl main(void)
         WaitForMultipleObjects(NUM_THREADS, Threads_ptr, true, INFINITE);
 
         for (int i; i < NUM_THREADS; i++) {
-           CloseHandle(Threads[i]); 
-        }
-        
+           CloseHandle(Threads[i]);
+        } 
     }
 
     // clean up mutex
@@ -189,19 +188,26 @@ DWORD WINAPI thread_receive(LPVOID Param) {
     while(true) {
         ZeroMemory(buffer, sizeof(buffer));
         int iResult = recv(client_socket, buffer, sizeof(buffer), 0);
-        std::cout << "test\n";
+        // deserialize buffer into packet
+        packet *received;
+        deserialize(buffer, received);
+        //packet *recv_ptr = (packet*)&buffer;
+        //packet received = *recv_ptr;
         // if message received
         if (iResult > 0) {
             // if receiving ping
-            if (strcmp(buffer, ":ping") == 0) {
+            if (received->packet_type == 3) {
                 EnterCriticalSection(&cf);
                 std::cout << "Client sent a ping, are you online? Press Y to affirm.\n";
                 LeaveCriticalSection(&cf);
                 // if 'Y' is pressed on the keyboard within 5 minutes
                 if (check_key_timeout('Y', 300000)) {
                     // send back a ping packet
+                    packet *ping_accept;
+                    ping_accept->packet_type = 1;
                     ZeroMemory(buffer, sizeof(buffer));
-                    strcpy(buffer, ":ping_accept");
+                    serialize(buffer, ping_accept);
+                    //char *ping_ptr = (char *)&ping_accept;
                     EnterCriticalSection(&cf);
                     int iSendResult = send(client_socket, buffer, sizeof(buffer), 0);
                     LeaveCriticalSection(&cf);
@@ -212,8 +218,11 @@ DWORD WINAPI thread_receive(LPVOID Param) {
                         return -7;
                     }
                 } else {
+                    packet *ping_reject;
+                    ping_reject->packet_type = 2;
+                    //char *ping_ptr = (char *)&ping_reject;
                     ZeroMemory(buffer, sizeof(buffer));
-                    strcpy(buffer, ":ping_reject");
+                    serialize(buffer, ping_reject);
                     int iSendResult = send(client_socket, buffer, sizeof(buffer), 0);
                     if (iSendResult == SOCKET_ERROR) {
                         std::cerr << "send message failed with error: " << WSAGetLastError();
@@ -221,27 +230,27 @@ DWORD WINAPI thread_receive(LPVOID Param) {
                         WSACleanup();
                         return -7;
                     }
-                } 
+                }
             }
             // if receive quit packet
-            else if (strcmp(buffer, ":quit") == 0) {
+            else if (received->packet_type == 3) {
                 EnterCriticalSection(&cf);
                 std::cout << "Client is quitting, would you like to quit as well? (Y/N)\n";
                 char response[DEFAULT_BUFLEN];
                 std::cin >> response;
                 LeaveCriticalSection(&cf);
                 if (strcmp(response, "Y")) {
-                    closesocket(client_socket); 
+                    closesocket(client_socket);
                     WSACleanup();
-                    return 0;
+                    break;
                 } else {
                     continue;
                 }
-            } else {   
+            } else {  
                 // if receiving msg
                 // output message to screen
                 EnterCriticalSection(&cf);
-                std::cout << buffer << "\n";
+                std::cout << received->message << "\n";
                 LeaveCriticalSection(&cf);
             }
         } else if (iResult < 0) {
@@ -250,7 +259,7 @@ DWORD WINAPI thread_receive(LPVOID Param) {
             WSACleanup();
             return -7;
         }
-        // if no message received just continue in the loop 
+        // if no message received just continue in the loop
     }
     return 0;
 }
@@ -270,6 +279,11 @@ DWORD WINAPI thread_send(LPVOID Param) {
         LeaveCriticalSection(&cf);
         // if sending ping packet
         if (strcmp(buffer, ":ping") == 0) {
+            packet *ping;
+            ping->packet_type = 0;
+            ZeroMemory(buffer, sizeof(buffer));
+            serialize(buffer, ping);
+            //char *packet_ptr = (char*)&ping;
             int iSendResult = send(client_socket, buffer, sizeof(buffer), 0);
             if (iSendResult == SOCKET_ERROR) {
                 std::cerr << "send message failed with error: " << WSAGetLastError();
@@ -288,6 +302,11 @@ DWORD WINAPI thread_send(LPVOID Param) {
             // if sure
             if (strcmp(response, "Y") == 0) {
                 // send the quit packet
+                packet *quit;
+                quit->packet_type = 3;
+                //char *quit_ptr = (char *)&quit;
+                ZeroMemory(buffer, sizeof(buffer));
+                serialize(buffer, quit);
                 int iSendResult = send(client_socket, buffer, sizeof(buffer), 0);
                 if (iSendResult == SOCKET_ERROR) {
                     std::cerr << "send message failed with error: " << WSAGetLastError();
@@ -297,12 +316,18 @@ DWORD WINAPI thread_send(LPVOID Param) {
                 }
                 closesocket(client_socket);
                 WSACleanup();
-                return 0;
+                break;
             } else { // response is N
                 continue;
             }
         } else {
             // if sending msg packet
+            packet *msg;
+            msg->packet_type = 4;
+            strcpy(msg->message, buffer);
+            //char *msg_ptr = (char *)&msg;
+            ZeroMemory(buffer, sizeof(buffer));
+            serialize(buffer, msg);
             int iSendResult = send(client_socket, buffer, sizeof(buffer), 0);
             if (iSendResult == SOCKET_ERROR) {
                 std::cerr << "send message failed with error: " << WSAGetLastError();
@@ -336,4 +361,37 @@ bool check_key_timeout(char key, int timeout) {
     }
     // timeout was reached so key was not pressed
     return false;
+}
+
+void serialize(char *buffer, packet *packet_msg) {
+    // integer serialization for packet_type
+    int *i = (int*)buffer;
+    *i = packet_msg->packet_type;
+    i++;
+
+    // char serialization for the message
+    char *c = (char*)i;
+    int n = 0;
+    while (n < DEFAULT_BUFLEN) {
+        *c = packet_msg->message[n];
+        c++;
+        n++;
+    }
+   
+}
+
+void deserialize(char *buffer, packet *packet_msg) {
+    // integer deserialization for packet_type
+    int *i = (int*)buffer;
+    packet_msg->packet_type = *i;
+    i++;
+
+    // char deserialization for the message
+    char *c = (char*)i;
+    int n = 0;
+    while (n < DEFAULT_BUFLEN) {
+        packet_msg->message[n] = *c;
+        c++;
+        n++;
+    }
 }
