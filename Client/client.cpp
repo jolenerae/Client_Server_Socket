@@ -17,7 +17,7 @@
 
 // define default values
 #define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "54000"
+#define DEFAULT_PORT "55001"
 #define NUM_THREADS 2
 
 // global mutex for thread synchronization
